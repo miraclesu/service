@@ -70,9 +70,8 @@ func NewSmtpServer(conf *SmtpConf) (server Server) {
     server = &SmtpServer{
         rate:    time.Now(),
         auth:    conf.smtpAuth(),
-        running: false,
         timeout: make(chan time.Duration, 1),
-        msg:     make(chan *Message, 1),
+        msg:     make(chan *Message, 8),
         conf:    conf,
     }
     return
@@ -128,7 +127,7 @@ func (s *SmtpServer) closeConn(t time.Duration) (err error) {
     return
 }
 
-func (s *SmtpServer) reConn() (err error) {
+func (s *SmtpServer) connect() (err error) {
     s.client, err = smtp.Dial(fmt.Sprintf("%s:%d", s.conf.Host, s.conf.Port))
     if err != nil {
         //TODO
@@ -162,7 +161,7 @@ func (s *SmtpServer) send(m *Message) (err error) {
     s.rate = time.Now()
 
     if !s.running {
-        err = s.reConn()
+        err = s.connect()
         if err != nil {
             //TODO
         }

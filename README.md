@@ -1,1 +1,1 @@
-# servic for smtp
+# A wrapper for smtp

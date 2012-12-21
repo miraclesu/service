@@ -6,8 +6,8 @@ import (
 )
 
 var (
-    ErrNoActiveServer   = errors.New("No active server.")
-    ErrServiceNoRunning = errors.New("The Service does not running.")
+    ErrNoActiveServer = errors.New("No active server.")
+    ErrServiceWarning = errors.New("The Service does not running.")
 )
 
 func Errorf(format string, msg ...interface{}) error {

@@ -1,19 +1,24 @@
 package service
 
 import (
+    "fmt"
     "time"
 )
 
 const (
-    Limit = 10 * time.Minute
+    Limit    = 1 * time.Hour
+    Step     = 21 * time.Minute
+    ErrTimes = 3
 )
 
 type Server interface {
+    Init(conf ...interface{}) error
+    Send(m *Message) error
+    Close() error
     Rate() time.Time
     Tag() string
     Running() bool
-    Send(m *Message) error
-    Close(t time.Duration) error
+    Timeout() bool
 }
 
 type Message struct {
@@ -24,6 +29,7 @@ type Message struct {
     Body       []byte
     Tag        string
     Mass       bool
+    Times      int
 }
 
 type ServerList map[string][]Server
@@ -45,11 +51,16 @@ func New() (s *Service) {
     return
 }
 
-func (s *Service) AddServer(server Server) {
+func (s *Service) AddServer(server Server, conf ...interface{}) (err error) {
+    err = server.Init(conf...)
+    if err != nil {
+        return
+    }
     s.serverlist[server.Tag()] = append(s.serverlist[server.Tag()], server)
+    return
 }
 
-func (s *Service) RemoveServer(server Server) (err error) {
+func (s *Service) RemoveServer(server Server) {
     b := false
     for k, v := range s.serverlist[server.Tag()] {
         if v == server {
@@ -59,18 +70,25 @@ func (s *Service) RemoveServer(server Server) (err error) {
         }
     }
     if !b {
-        return Errorf("The server does not exist: %+v", server)
+        s.err(Errorf("The server does not exist: %+v", server))
     }
     if len(s.serverlist[server.Tag()]) == 0 {
         s.err(ErrNoActiveServer)
     }
-    return
 }
 
-func (s *Service) Work(t time.Duration) {
+func (s *Service) removeSickServer(tag string) {
+    for _, server := range s.serverlist[tag] {
+        if server.Rate().Sub(time.Now()) > Limit {
+            s.RemoveServer(server)
+        }
+    }
+}
+
+func (s *Service) Work() {
     go s.split()
     go s.sendLoop()
-    go s.execTimeOut(t)
+    go s.execTimeOut()
     s.running = true
 }
 
@@ -82,7 +100,10 @@ func (s *Service) Close() {
 
 func (s *Service) Send(m *Message) error {
     if !s.running {
-        return ErrServiceNoRunning
+        s.err(ErrServiceWarning)
+    }
+    if len(s.serverlist[m.Tag]) == 0 && len(s.origMsg) > cap(s.origMsg)/2 {
+        return ErrNoActiveServer
     }
     go func() {
         s.origMsg <- m
@@ -99,34 +120,20 @@ func (s *Service) split() {
                 msg := *m
                 msg.To = map[string]string{k: v}
                 s.msg <- &msg
+                fmt.Println(&msg)
             }
         }
     }
 }
 
-func (s *Service) noMsg() bool {
-    return len(s.msg) == 0 && len(s.origMsg) == 0
-}
-
-func (s *Service) removeServer(server Server) (err error) {
-    if server.Rate().Sub(time.Now()) > Limit {
-        return s.RemoveServer(server)
-    }
-    return
-}
-
 func (s *Service) selectServer(tag string) (server Server, err error) {
-ReSelect:
+    s.removeSickServer(tag)
     servers := s.serverlist[tag]
     if len(servers) == 0 {
         return nil, Errorf("No active %s server.", tag)
     }
     server = servers[0]
     for i := len(servers) - 1; i >= 0; i-- {
-        if servers[i].Rate().Sub(time.Now()) > Limit {
-            s.RemoveServer(servers[i])
-            goto ReSelect
-        }
         if server.Rate().After(servers[i].Rate()) {
             if len(s.msg) < len(servers) && server.Running() && !servers[i].Running() {
                 continue
@@ -137,26 +144,37 @@ ReSelect:
     return
 }
 
-func (s *Service) sendLoop() {
-    for m := range s.msg {
-        server, err := s.selectServer(m.Tag)
-        if err == nil {
-            err = server.Send(m)
+func (s *Service) send(server Server, m *Message) {
+    if err := server.Send(m); err != nil {
+        if m.Times < ErrTimes {
+            m.Times++
+            s.msg <- m
         }
-        if err != nil {
-            s.err(err)
-            s.err(Errorf("Failed to send the message : %+v"))
-        }
+        s.err(err)
+        s.err(Errorf("Failed to send the message : %+v", m))
+    } else {
+        s.err(Errorf("Successfully send the message : %+v", m))
     }
 }
 
-func (s *Service) execTimeOut(t time.Duration) {
+func (s *Service) sendLoop() {
+    for m := range s.msg {
+        server, err := s.selectServer(m.Tag)
+        if err != nil {
+            s.err(err)
+            continue
+        }
+        go s.send(server, m)
+    }
+}
+
+func (s *Service) execTimeOut() {
     c := time.Tick(1 * time.Second)
     for _ = range c {
         for _, servers := range s.serverlist {
             for _, server := range servers {
-                if time.Now().Sub(server.Rate()) > t {
-                    err := server.Close(t)
+                if server.Timeout() {
+                    err := server.Close()
                     if err != nil {
                         s.err(err)
                     }

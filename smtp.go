@@ -25,10 +25,8 @@ type SmtpServer struct {
     client  *smtp.Client
     auth    smtp.Auth
     running bool
-    timeout chan time.Duration
-    msg     chan *Message
     conf    *SmtpConf
-    t       int //TODO delete after test
+    // t       int //TODO delete after test
 }
 
 //smtp.PlainAuth refuses to send your password over an unencrypted connection.
@@ -49,6 +47,7 @@ type SmtpConf struct {
     Username string
     Password string
     AuthType string
+    TimeOut  time.Duration
 }
 
 func (conf *SmtpConf) smtpAuth() (auth smtp.Auth) {
@@ -68,21 +67,35 @@ func (conf *SmtpConf) smtpAuth() (auth smtp.Auth) {
 
 func NewSmtpServer(conf *SmtpConf) (server Server) {
     server = &SmtpServer{
-        rate:    time.Now(),
-        auth:    conf.smtpAuth(),
-        timeout: make(chan time.Duration, 1),
-        msg:     make(chan *Message, 8),
-        conf:    conf,
+        auth: conf.smtpAuth(),
+        conf: conf,
+    }
+    return
+}
+
+func (s *SmtpServer) Init(conf ...interface{}) (err error) {
+    s.rate = time.Now()
+    if s.conf.TimeOut == 0 {
+        s.conf.TimeOut = Step / 5
+    }
+    return s.connect()
+}
+
+func (s *SmtpServer) Send(m *Message) error {
+    fmt.Printf("=======%v\n", m)
+    return s.send(m)
+}
+
+func (s *SmtpServer) Close() (err error) {
+    s.lock.Lock()
+    defer s.lock.Unlock()
+    if s.Timeout() {
+        err = s.closeConn()
     }
     return
 }
 
 func (s *SmtpServer) Rate() time.Time {
-    if len(s.timeout) != 0 {
-        <-s.timeout
-        return s.rate
-    }
-    s.rate = s.rate.Add(time.Duration(len(s.msg)*2) * time.Second)
     return s.rate
 }
 
@@ -94,35 +107,15 @@ func (s *SmtpServer) Running() bool {
     return s.running
 }
 
-func (s *SmtpServer) Send(m *Message) (err error) {
-    s.msg <- m
-    err = s.work()
-    return
+func (s *SmtpServer) Timeout() bool {
+    return time.Now().Sub(s.rate) > s.conf.TimeOut
 }
 
-func (s *SmtpServer) Close(t time.Duration) (err error) {
-    s.timeout <- t
-    err = s.work()
-    return
-}
-
-func (s *SmtpServer) work() (err error) {
-    select {
-    case m := <-s.msg:
-        err = s.send(m)
-    case t := <-s.timeout:
-        err = s.closeConn(t)
-    }
-    return
-}
-
-func (s *SmtpServer) closeConn(t time.Duration) (err error) {
-    s.lock.Lock()
-    defer s.lock.Unlock()
-    if s.running && time.Now().Sub(s.rate) > t {
+func (s *SmtpServer) closeConn() (err error) {
+    if s.running {
         err = s.client.Quit()
         s.running = false
-        fmt.Printf("server=%d---------close\n", s.t)
+        // fmt.Printf("server=%d---------close\n", s.t)
     }
     return
 }
@@ -130,19 +123,18 @@ func (s *SmtpServer) closeConn(t time.Duration) (err error) {
 func (s *SmtpServer) connect() (err error) {
     s.client, err = smtp.Dial(fmt.Sprintf("%s:%d", s.conf.Host, s.conf.Port))
     if err != nil {
-        //TODO
+        return
     }
-    fmt.Printf("server=%d---------reopen\n", s.t)
+    // fmt.Printf("server=%d---------reopen\n", s.t)
     if ok, _ := s.client.Extension("StartTLS"); ok {
         if err = s.client.StartTLS(nil); err != nil {
-            fmt.Printf("tls err=%v\n", err)
-            panic(err)
+            fmt.Printf("=====tls %v \n", err)
+            return
         }
     }
     if s.auth != nil {
         err = s.client.Auth(s.auth)
         if err != nil {
-            //TODO
             return
         }
     }
@@ -150,32 +142,33 @@ func (s *SmtpServer) connect() (err error) {
     return
 }
 
+func (s *SmtpServer) upgrade() {
+    s.rate = s.rate.Add(Step)
+}
+
 func (s *SmtpServer) send(m *Message) (err error) {
     s.lock.Lock()
-    defer func() {
-        if len(s.timeout) != 0 {
-            <-s.timeout
-        }
-        s.lock.Unlock()
-    }()
-    s.rate = time.Now()
+    defer s.lock.Unlock()
 
     if !s.running {
         err = s.connect()
         if err != nil {
-            //TODO
+            s.upgrade()
+            return
         }
     }
 
     if m.Mass {
         err = s.massSend(s.client, m, s.getFromAddr(m))
-        time.Sleep(1 * time.Second)
-        fmt.Printf("server=%d, msg=%v, err=%v\n", s.t, *m, err)
+    } else {
+        err = s.singleSend(s.client, m, s.getFromAddr(m))
+    }
+    if err != nil {
         return
     }
-    err = s.singleSend(s.client, m, s.getFromAddr(m))
-    time.Sleep(1 * time.Second)
-    fmt.Printf("server=%d, msg=%v, err=%v\n", s.t, *m, err)
+    s.rate = time.Now()
+    // time.Sleep(1 * time.Second)
+    // fmt.Printf("server=%d, msg=%v, err=%v\n", s.t, *m, connecterr)
     return
 }
 
@@ -209,7 +202,7 @@ func (s *SmtpServer) formatBody(m *Message, to string) []byte {
 func (s *SmtpServer) massSend(client *smtp.Client, m *Message, sendAddr string) (err error) {
     err = s.client.Mail(sendAddr)
     if err != nil {
-        //TODO
+        s.upgrade()
         return
     }
     toStr := ""
@@ -217,17 +210,14 @@ func (s *SmtpServer) massSend(client *smtp.Client, m *Message, sendAddr string) 
         to := mail.Address{name, addr}
         toStr += to.String() + ", "
         if err = client.Rcpt(addr); err != nil {
-            //TODO
             return
         }
     }
     w, err := client.Data()
     if err != nil {
-        //TODO
         return
     }
     if _, err = w.Write(s.formatBody(m, toStr)); err != nil {
-        //TODO
         return
     }
     err = w.Close()
@@ -238,22 +228,18 @@ func (s *SmtpServer) singleSend(client *smtp.Client, m *Message, sendAddr string
     for name, addr := range m.To {
         err = s.client.Mail(sendAddr)
         if err != nil {
-            //TODO
+            s.upgrade()
             return
         }
         if err = client.Rcpt(addr); err != nil {
-            //TODO
             break
         }
         w, err := client.Data()
         if err != nil {
-            //TODO
             break
         }
         to := mail.Address{name, addr}
-        toStr := to.String()
-        if _, err = w.Write(s.formatBody(m, toStr)); err != nil {
-            //TODO
+        if _, err = w.Write(s.formatBody(m, to.String())); err != nil {
             break
         }
         if err = w.Close(); err != nil {

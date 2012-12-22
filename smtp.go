@@ -17,6 +17,10 @@ const (
 
     //tags
     SMTP = "smtp"
+
+    //conf
+    Limit = 1 * time.Hour
+    Step  = 21 * time.Minute
 )
 
 type SmtpServer struct {
@@ -26,7 +30,6 @@ type SmtpServer struct {
     auth    smtp.Auth
     running bool
     conf    *SmtpConf
-    // t       int //TODO delete after test
 }
 
 //smtp.PlainAuth refuses to send your password over an unencrypted connection.
@@ -76,13 +79,12 @@ func NewSmtpServer(conf *SmtpConf) (server Server) {
 func (s *SmtpServer) Init(conf ...interface{}) (err error) {
     s.rate = time.Now()
     if s.conf.TimeOut == 0 {
-        s.conf.TimeOut = Step / 5
+        s.conf.TimeOut = Step / 2
     }
     return s.connect()
 }
 
 func (s *SmtpServer) Send(m *Message) error {
-    fmt.Printf("=======%v\n", m)
     return s.send(m)
 }
 
@@ -111,11 +113,14 @@ func (s *SmtpServer) Timeout() bool {
     return time.Now().Sub(s.rate) > s.conf.TimeOut
 }
 
+func (s *SmtpServer) Sick() bool {
+    return s.rate.Sub(time.Now()) > Limit
+}
+
 func (s *SmtpServer) closeConn() (err error) {
     if s.running {
         err = s.client.Quit()
         s.running = false
-        // fmt.Printf("server=%d---------close\n", s.t)
     }
     return
 }
@@ -125,14 +130,12 @@ func (s *SmtpServer) connect() (err error) {
     if err != nil {
         return
     }
-    // fmt.Printf("server=%d---------reopen\n", s.t)
-    if ok, _ := s.client.Extension("StartTLS"); ok {
-        if err = s.client.StartTLS(nil); err != nil {
-            fmt.Printf("=====tls %v \n", err)
-            return
-        }
-    }
     if s.auth != nil {
+        if ok, _ := s.client.Extension("StartTLS"); ok {
+            if err = s.client.StartTLS(nil); err != nil {
+                return
+            }
+        }
         err = s.client.Auth(s.auth)
         if err != nil {
             return
@@ -167,8 +170,6 @@ func (s *SmtpServer) send(m *Message) (err error) {
         return
     }
     s.rate = time.Now()
-    // time.Sleep(1 * time.Second)
-    // fmt.Printf("server=%d, msg=%v, err=%v\n", s.t, *m, connecterr)
     return
 }
 

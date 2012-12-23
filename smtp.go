@@ -44,13 +44,19 @@ func (a unencryptedAuth) Start(server *smtp.ServerInfo) (string, []byte, error) 
     return a.Auth.Start(&s)
 }
 
+type OptionConf struct {
+}
+
 type SmtpConf struct {
     Host     string
     Port     int
     Username string
     Password string
     AuthType string
-    TimeOut  time.Duration
+    //options   
+    TimeOut   time.Duration
+    SickLimit time.Duration
+    SickStep  time.Duration
 }
 
 func (conf *SmtpConf) smtpAuth() (auth smtp.Auth) {
@@ -80,6 +86,12 @@ func (s *SmtpServer) Init(conf ...interface{}) (err error) {
     s.rate = time.Now()
     if s.conf.TimeOut == 0 {
         s.conf.TimeOut = Step / 2
+    }
+    if s.conf.SickLimit == 0 {
+        s.conf.SickLimit = Limit
+    }
+    if s.conf.SickStep == 0 {
+        s.conf.SickStep = Step
     }
     return s.connect()
 }

@@ -207,7 +207,7 @@ func (s *SmtpServer) formatBody(m *Message, to string) []byte {
     for k, v := range header {
         body += fmt.Sprintf("%s: %s\r\n", k, v)
     }
-    body += "\r\n" + b64.EncodeToString(m.Body)
+    body += "\r\n" + b64.EncodeToString([]byte(m.Body))
 
     return []byte(body)
 }

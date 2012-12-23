@@ -25,7 +25,7 @@ type Message struct {
     From       string
     To         map[string]string
     Subject    string
-    Body       []byte
+    Body       string
     Tag        string
     Mass       bool
     Times      int

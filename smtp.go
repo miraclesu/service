@@ -19,8 +19,8 @@ const (
     SMTP = "smtp"
 
     //conf
-    Limit = 1 * time.Hour
-    Step  = 21 * time.Minute
+    Limit = 60 * 60
+    Step  = 21 * 60
 )
 
 type SmtpServer struct {
@@ -54,9 +54,9 @@ type SmtpConf struct {
     Password string
     AuthType string
     //options   
-    TimeOut   time.Duration
-    SickLimit time.Duration
-    SickStep  time.Duration
+    TimeOut   uint32
+    SickLimit uint32
+    SickStep  uint32
 }
 
 func (conf *SmtpConf) smtpAuth() (auth smtp.Auth) {
@@ -122,11 +122,11 @@ func (s *SmtpServer) Running() bool {
 }
 
 func (s *SmtpServer) Timeout() bool {
-    return time.Now().Sub(s.rate) > s.conf.TimeOut
+    return time.Now().Sub(s.rate) > time.Duration(s.conf.TimeOut)*time.Second
 }
 
 func (s *SmtpServer) Sick() bool {
-    return s.rate.Sub(time.Now()) > Limit
+    return s.rate.Sub(time.Now()) > time.Duration(s.conf.SickLimit)*time.Second
 }
 
 func (s *SmtpServer) closeConn() (err error) {
@@ -158,7 +158,7 @@ func (s *SmtpServer) connect() (err error) {
 }
 
 func (s *SmtpServer) upgrade() {
-    s.rate = s.rate.Add(Step)
+    s.rate = s.rate.Add(time.Duration(s.conf.SickStep) * time.Second)
 }
 
 func (s *SmtpServer) send(m *Message) (err error) {

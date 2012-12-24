@@ -1,6 +1,7 @@
 package service
 
 import (
+    "labix.org/v2/mgo/bson"
     "time"
 )
 
@@ -21,6 +22,7 @@ type Server interface {
 }
 
 type Message struct {
+    Id         bson.ObjectId
     SenderName string
     From       string
     To         map[string]string
@@ -39,6 +41,7 @@ type Service struct {
     msg        chan *Message
     running    bool
     ErrHandler ErrorHandler
+    MsgHandler MessageHandler
 }
 
 func New() (s *Service) {
@@ -110,6 +113,7 @@ func (s *Service) Send(m *Message) error {
         return ErrNoActiveServer
     }
     go func() {
+        m.Id = bson.NewObjectId()
         s.origMsg <- m
     }()
     return nil
@@ -120,6 +124,10 @@ func (s *Service) split() {
         if m.Mass {
             s.msg <- m
         } else {
+            if len(m.To) == 0 {
+                s.err(Errorf("Error: Message need To field!"))
+                s.err(Errorf("Failed to send the message : %+v", m))
+            }
             for k, v := range m.To {
                 msg := *m
                 msg.To = map[string]string{k: v}
@@ -156,7 +164,7 @@ func (s *Service) send(server Server, m *Message) {
             s.msg <- m
         }
     } else {
-        s.err(Errorf("Successfully send the message : %+v", m))
+        s.msgf(Errorf("Successfully send the message : %+v", m))
     }
 }
 
@@ -190,5 +198,11 @@ func (s *Service) execTimeOut() {
 func (s *Service) err(e error) {
     if s.ErrHandler != nil {
         s.ErrHandler(e)
+    }
+}
+
+func (s *Service) msgf(e error) {
+    if s.MsgHandler != nil {
+        s.MsgHandler(e)
     }
 }

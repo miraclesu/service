@@ -15,3 +15,4 @@ func Errorf(format string, msg ...interface{}) error {
 }
 
 type ErrorHandler func(e error)
+type MessageHandler func(e error)

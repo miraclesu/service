@@ -1,6 +1,7 @@
 package service
 
 import (
+    "bytes"
     "encoding/base64"
     "fmt"
     "net/mail"
@@ -203,25 +204,29 @@ func (s *SmtpServer) formatBody(m *Message, to string) []byte {
     header["Content-Type"] = "text/html; charset=UTF-8"
     header["Content-Transfer-Encoding"] = "base64"
 
-    body := ""
+    var body bytes.Buffer
     for k, v := range header {
-        body += fmt.Sprintf("%s: %s\r\n", k, v)
+        body.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
     }
-    body += "\r\n" + b64.EncodeToString([]byte(m.Body))
+    body.WriteString("\r\n")
+    body.WriteString(b64.EncodeToString([]byte(m.Body)))
 
-    return []byte(body)
+    return body.Bytes()
 }
 
 func (s *SmtpServer) massSend(client *smtp.Client, m *Message, sendAddr string) (err error) {
     err = s.client.Mail(sendAddr)
     if err != nil {
-        s.upgrade()
+        if s.auth != nil {
+            s.upgrade()
+        }
         return
     }
-    toStr := ""
+    var toStr bytes.Buffer
     for name, addr := range m.To {
         to := mail.Address{name, addr}
-        toStr += to.String() + ", "
+        toStr.WriteString(to.String())
+        toStr.WriteString(", ")
         if err = client.Rcpt(addr); err != nil {
             return
         }
@@ -230,7 +235,7 @@ func (s *SmtpServer) massSend(client *smtp.Client, m *Message, sendAddr string) 
     if err != nil {
         return
     }
-    if _, err = w.Write(s.formatBody(m, toStr)); err != nil {
+    if _, err = w.Write(s.formatBody(m, toStr.String())); err != nil {
         return
     }
     err = w.Close()
@@ -241,8 +246,10 @@ func (s *SmtpServer) singleSend(client *smtp.Client, m *Message, sendAddr string
     for name, addr := range m.To {
         err = s.client.Mail(sendAddr)
         if err != nil {
-            s.upgrade()
-            return
+            if s.auth != nil {
+                s.upgrade()
+            }
+            break
         }
         if err = client.Rcpt(addr); err != nil {
             break

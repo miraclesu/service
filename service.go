@@ -6,8 +6,9 @@ import (
 )
 
 const (
-    ErrTimes = 3
-    TickStep = 1 * time.Minute
+    ErrTimes  = 3
+    TickStep  = 1 * time.Minute
+    Unlimited = 0
 )
 
 type Server interface {
@@ -39,16 +40,23 @@ type Service struct {
     serverlist ServerList
     origMsg    chan *Message
     msg        chan *Message
+    limit      chan bool
     running    bool
     ErrHandler ErrorHandler
     MsgHandler MessageHandler
 }
 
-func New() (s *Service) {
+func New(l int) (s *Service) {
     s = &Service{
         serverlist: make(map[string][]Server),
-        origMsg:    make(chan *Message, 512),
-        msg:        make(chan *Message, 1024),
+        origMsg:    make(chan *Message, 128),
+        msg:        make(chan *Message, 256),
+    }
+    if l != Unlimited {
+        s.limit = make(chan bool, l)
+        for i := 0; i < l; i++ {
+            s.limit <- true
+        }
     }
     return
 }
@@ -103,6 +111,9 @@ func (s *Service) Close() {
     s.running = false
     close(s.origMsg)
     close(s.msg)
+    if s.limit != nil {
+        close(s.limit)
+    }
 }
 
 func (s *Service) Send(m *Message) error {
@@ -112,22 +123,19 @@ func (s *Service) Send(m *Message) error {
     if len(s.serverlist[m.Tag]) == 0 && len(s.origMsg) > cap(s.origMsg)/2 {
         return ErrNoActiveServer
     }
-    go func() {
-        m.Id = bson.NewObjectId()
-        s.origMsg <- m
-    }()
+    m.Id = bson.NewObjectId()
+    s.origMsg <- m
     return nil
 }
 
 func (s *Service) split() {
     for m := range s.origMsg {
+        if len(m.To) == 0 {
+            s.err(Errorf("Error: Failed to send the message : %+v, Message need \"To\" field.", m))
+        }
         if m.Mass {
             s.msg <- m
         } else {
-            if len(m.To) == 0 {
-                s.err(Errorf("Error: Message need To field!"))
-                s.err(Errorf("Failed to send the message : %+v", m))
-            }
             for k, v := range m.To {
                 msg := *m
                 msg.To = map[string]string{k: v}
@@ -156,12 +164,18 @@ func (s *Service) selectServer(tag string) (server Server, err error) {
 }
 
 func (s *Service) send(server Server, m *Message) {
+    if s.limit != nil {
+        defer func() {
+            s.limit <- true
+        }()
+    }
     if err := server.Send(m); err != nil {
         s.err(err)
-        s.err(Errorf("Failed to send the message : %+v", m))
         if m.Times < ErrTimes {
             m.Times++
             s.msg <- m
+        } else {
+            s.err(Errorf("Failed to send the message : %+v", m))
         }
     } else {
         s.msgf(Errorf("Successfully send the message : %+v", m))
@@ -170,6 +184,9 @@ func (s *Service) send(server Server, m *Message) {
 
 func (s *Service) sendLoop() {
     for m := range s.msg {
+        if s.limit != nil {
+            <-s.limit
+        }
         server, err := s.selectServer(m.Tag)
         if err != nil {
             s.err(err)

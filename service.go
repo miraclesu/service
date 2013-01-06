@@ -7,7 +7,7 @@ import (
 
 const (
     ErrTimes  = 3
-    TickStep  = 1 * time.Minute
+    TickStep  = 20 * time.Second
     Unlimited = 0
 )
 

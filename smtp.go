@@ -54,7 +54,7 @@ type SmtpConf struct {
     Username string
     Password string
     AuthType string
-    //options   
+    //options
     TimeOut   uint32
     SickLimit uint32
     SickStep  uint32
@@ -86,7 +86,7 @@ func NewSmtpServer(conf *SmtpConf) (server Server) {
 func (s *SmtpServer) Init(conf ...interface{}) (err error) {
     s.rate = time.Now()
     if s.conf.TimeOut == 0 {
-        s.conf.TimeOut = Step / 2
+        s.conf.TimeOut = Step / 5
     }
     if s.conf.SickLimit == 0 {
         s.conf.SickLimit = Limit

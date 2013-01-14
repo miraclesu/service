@@ -45,9 +45,6 @@ func (a unencryptedAuth) Start(server *smtp.ServerInfo) (string, []byte, error) 
     return a.Auth.Start(&s)
 }
 
-type OptionConf struct {
-}
-
 type SmtpConf struct {
     Host     string
     Port     int
@@ -86,7 +83,7 @@ func NewSmtpServer(conf *SmtpConf) (server Server) {
 func (s *SmtpServer) Init(conf ...interface{}) (err error) {
     s.rate = time.Now()
     if s.conf.TimeOut == 0 {
-        s.conf.TimeOut = Step / 5
+        s.conf.TimeOut = Step / 8
     }
     if s.conf.SickLimit == 0 {
         s.conf.SickLimit = Limit
